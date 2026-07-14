@@ -136,20 +136,34 @@ export class ZolaClient {
 
     const response = await this.requestMobile<{
       data: {
-        user: { id: string };
-        wedding_account: { wedding_account_id: number };
-        wedding: { wedding_id: number; wedding_date: string | null; slug: string | null };
-        registry: { id: string };
-      };
+        user?: { id: string } | null;
+        wedding_account?: { wedding_account_id: number } | null;
+        wedding?: { wedding_id: number; wedding_date: string | null; slug: string | null } | null;
+        registry?: { id: string } | null;
+      } | null;
     }>('GET', '/v3/users/me/context');
 
+    // Zola returns null sub-objects for accounts that haven't set up every
+    // section yet (e.g. no registry created). Guard each access so a missing
+    // section can't crash unrelated tools — only weddingAccountId is truly
+    // required; callers that need registryId/userId handle empties themselves.
+    const data = response?.data ?? {};
+    const weddingAccountId = Number(envAccountId) || data.wedding_account?.wedding_account_id || 0;
+    if (!weddingAccountId) {
+      throw new Error(
+        'Could not resolve your Zola wedding account: GET /v3/users/me/context returned no ' +
+          'wedding_account. Set ZOLA_ACCOUNT_ID (and optionally ZOLA_WEDDING_ID / ' +
+          'ZOLA_REGISTRY_ID) to override, or confirm this login has an active wedding.'
+      );
+    }
+
     this.cachedContext = {
-      weddingAccountId: Number(envAccountId) || response.data.wedding_account.wedding_account_id,
-      weddingId: Number(envWeddingId) || response.data.wedding.wedding_id,
-      registryId: envRegistryId || response.data.registry.id,
-      userId: response.data.user.id,
-      weddingDate: response.data.wedding.wedding_date,
-      weddingSlug: response.data.wedding.slug,
+      weddingAccountId,
+      weddingId: Number(envWeddingId) || data.wedding?.wedding_id || 0,
+      registryId: envRegistryId || data.registry?.id || '',
+      userId: data.user?.id ?? '',
+      weddingDate: data.wedding?.wedding_date ?? null,
+      weddingSlug: data.wedding?.slug ?? null,
     };
     return this.cachedContext;
   }

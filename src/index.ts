@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { runMcp } from '@chrischall/mcp-utils';
 import { client } from './client.js';
 import { registerVendorTools } from './tools/vendors.js';
