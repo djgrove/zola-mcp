@@ -205,6 +205,77 @@ export async function updateGuestAddress(client: ZolaClient, args: {
   return jsonResult(result.data);
 }
 
+export async function updateGuestPhone(client: ZolaClient, args: {
+  guest_group_id: number;
+  guest_id: number;
+  mobile_phone?: string;
+  home_phone?: string;
+}): Promise<ToolResult> {
+  const { weddingAccountId } = await client.getContext();
+  const dirResponse = await client.requestMobile<MobileEnvelope<DirectoryResponse>>(
+    'POST',
+    `/v3/guestlists/directory/wedding-accounts/${weddingAccountId}`,
+    { sort_by_name_asc: true }
+  );
+  const group = dirResponse.data.guest_groups.find(
+    (g) => g.guest_group_id === args.guest_group_id
+  );
+  if (!group) {
+    throw new Error(`Guest group with ID ${args.guest_group_id} not found`);
+  }
+  if (!group.guests.some((guest) => guest.guest_id === args.guest_id)) {
+    throw new Error(
+      `Guest with ID ${args.guest_id} not found in group ${args.guest_group_id}`
+    );
+  }
+
+  // Full read-modify-write through the verified bulk/directory endpoint
+  // (docs/zola-api-quirks.md §5). Phone is per-guest (not per-group), so only
+  // the matching guest_id is changed; every other guest — and every other
+  // field on the target guest — is preserved verbatim, including
+  // event_invitations, which would be wiped if blanked here.
+  const updatedGuests = group.guests.map((guest) => {
+    const base = {
+      ...guest,
+      event_invitations: guest.event_invitations ?? [],
+      tags: guest.tags ?? [],
+    };
+    if (guest.guest_id !== args.guest_id) return base;
+    return {
+      ...base,
+      mobile_phone: args.mobile_phone ?? guest.mobile_phone ?? '',
+      home_phone: args.home_phone !== undefined ? args.home_phone : guest.home_phone ?? '',
+    };
+  });
+
+  const body = {
+    updated_guest_groups: [
+      {
+        ...group,
+        wedding_account_id: group.wedding_account_id ?? weddingAccountId,
+        envelope_recipient: group.envelope_recipient ?? '',
+        gift_group: group.gift_group ?? {
+          gift_count: 0,
+          modules: [],
+          gift_groups: [],
+          guest_group_uuid: '',
+        },
+        thank_you_note_status: group.thank_you_note_status ?? 'NOT_STARTED',
+        rsvp_question_answers: group.rsvp_question_answers ?? [],
+        gift_count: group.gift_count ?? 0,
+        guests: updatedGuests,
+      },
+    ],
+  };
+
+  const result = await client.requestMobile<MobileEnvelope<unknown>>(
+    'PUT',
+    `/v3/guestlists/groups/wedding-accounts/${weddingAccountId}/bulk/directory`,
+    body
+  );
+  return jsonResult(result.data);
+}
+
 export async function removeGuest(client: ZolaClient, args: { guest_group_id: number }): Promise<ToolResult> {
   const { weddingAccountId } = await client.getContext();
   await client.requestMobile(
@@ -253,6 +324,17 @@ export function registerGuestTools(server: McpServer, client: ZolaClient): void 
     },
     annotations: { destructiveHint: false },
   }, (args) => updateGuestAddress(client, args));
+
+  server.registerTool('update_guest_phone', {
+    description: "Update a single guest's phone number(s). Targets one guest by guest_id within the group; other guests and fields are preserved.",
+    inputSchema: {
+      guest_group_id: z.number().describe('Guest group ID from list_guests'),
+      guest_id: z.number().describe('Guest ID (guest_id) from list_guests — the specific person to update'),
+      mobile_phone: z.string().optional().describe('Mobile phone, e.g. 425-324-4437'),
+      home_phone: z.string().optional().describe('Home phone'),
+    },
+    annotations: { destructiveHint: false },
+  }, (args) => updateGuestPhone(client, args));
 
   server.registerTool('remove_guest', {
     description: 'Remove a guest group from the guest list',

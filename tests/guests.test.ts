@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { client } from '../src/client.js';
-import { listGuests, addGuest, updateGuestAddress, removeGuest } from '../src/tools/guests.js';
+import { listGuests, addGuest, updateGuestAddress, updateGuestPhone, removeGuest } from '../src/tools/guests.js';
 import { setupClientMocks } from './_fixtures.js';
 
 // FLAT guest shape — matches the live /v3/guestlists/directory response.
@@ -175,6 +175,64 @@ describe('guest tools (mobile API)', () => {
     await expect(updateGuestAddress(client, { guest_group_id: 999 })).rejects.toThrow(
       'Guest group with ID 999 not found'
     );
+  });
+
+  it('updateGuestPhone: merges phone for the targeted guest_id, PUTs bulk/directory', async () => {
+    reqSpy
+      .mockResolvedValueOnce(structuredClone(MOCK_DIRECTORY) as never)
+      .mockResolvedValueOnce({ data: {} } as never);
+
+    await updateGuestPhone(client, {
+      guest_group_id: 152644475,
+      guest_id: 280379459,
+      mobile_phone: '425-324-4437',
+    });
+
+    expect(reqSpy).toHaveBeenCalledTimes(2);
+    expect(reqSpy).toHaveBeenNthCalledWith(
+      2,
+      'PUT',
+      '/v3/guestlists/groups/wedding-accounts/4664323/bulk/directory',
+      expect.objectContaining({
+        updated_guest_groups: [
+          expect.objectContaining({
+            guest_group_id: 152644475,
+            guests: [expect.objectContaining({
+              guest_id: 280379459,
+              mobile_phone: '425-324-4437',
+              // untouched fields preserved
+              address1: '3839 N Alta Vista Terrace',
+            })],
+          }),
+        ],
+      })
+    );
+  });
+
+  it('updateGuestPhone: preserves existing event_invitations (no wipe)', async () => {
+    reqSpy
+      .mockResolvedValueOnce(structuredClone(MOCK_DIRECTORY) as never)
+      .mockResolvedValueOnce({ data: {} } as never);
+
+    await updateGuestPhone(client, {
+      guest_group_id: 152644475,
+      guest_id: 280379459,
+      mobile_phone: '425-324-4437',
+    });
+
+    const body = reqSpy.mock.calls[1][2] as {
+      updated_guest_groups: Array<{ guests: Array<{ event_invitations: Array<{ event_id: number }> }> }>;
+    };
+    const invitations = body.updated_guest_groups[0].guests[0].event_invitations;
+    expect(invitations).toContainEqual(expect.objectContaining({ id: 111, event_id: 5108473 }));
+  });
+
+  it('updateGuestPhone: throws when guest_id not in group', async () => {
+    reqSpy.mockResolvedValueOnce(structuredClone(MOCK_DIRECTORY) as never);
+
+    await expect(
+      updateGuestPhone(client, { guest_group_id: 152644475, guest_id: 999, mobile_phone: '425-324-4437' })
+    ).rejects.toThrow('Guest with ID 999 not found in group 152644475');
   });
 
   it('removeGuest: PUTs to delete endpoint with guest_group_ids', async () => {
