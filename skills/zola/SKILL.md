@@ -19,6 +19,10 @@ MCP server for Zola — 30 tools for managing your entire wedding via the Zola m
 ### Budget
 - `get_budget` — Budget summary with all items
 - `update_budget_item` — Update cost or note
+- `list_budget_payments` — List payments/reminders
+- `add_budget_payment` — Add a paid or pending payment/reminder
+- `update_budget_payment` — Update a payment/reminder
+- `remove_budget_payment` — Delete a payment/reminder
 
 ### Guests
 - `list_guests` — List all guest groups with stats

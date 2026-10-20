@@ -79,6 +79,22 @@
       "description": "Update a budget item's cost or note"
     },
     {
+      "name": "list_budget_payments",
+      "description": "List budget payments and reminders"
+    },
+    {
+      "name": "add_budget_payment",
+      "description": "Add a paid or pending payment/reminder to a budget item"
+    },
+    {
+      "name": "update_budget_payment",
+      "description": "Update a budget payment/reminder"
+    },
+    {
+      "name": "remove_budget_payment",
+      "description": "Delete a budget payment/reminder"
+    },
+    {
       "name": "list_guests",
       "description": "List all guest groups with stats"
     },

@@ -171,6 +171,10 @@ Ask Claude: *"How's wedding planning going?"* — it should show your wedding da
 |------|-------------|------------|
 | `get_budget` | Budget summary with all items | Auto |
 | `update_budget_item` | Update cost or note | Confirm |
+| `list_budget_payments` | List payments/reminders (all or one item) | Auto |
+| `add_budget_payment` | Add a paid or pending payment/reminder | Confirm |
+| `update_budget_payment` | Update a payment/reminder | Confirm |
+| `remove_budget_payment` | Delete a payment/reminder | Confirm |
 
 ### Guests
 

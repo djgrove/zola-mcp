@@ -21,7 +21,7 @@ src/
   types.ts                Shared types
   tools/
     vendors.ts            list/search/add/update/remove booked vendors
-    budget.ts             get budget, update budget items
+    budget.ts             get budget, update budget items, payment/reminder CRUD
     guests.ts             list/add/update/remove guest groups, update address
     seating.ts            seating charts, seat assignment, unseated guests
     inquiries.ts          vendor inquiry conversations, mark read

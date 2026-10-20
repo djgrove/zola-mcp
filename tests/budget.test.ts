@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { client } from '../src/client.js';
-import { getBudget, updateBudgetItem } from '../src/tools/budget.js';
+import {
+  getBudget,
+  updateBudgetItem,
+  listBudgetPayments,
+  addBudgetPayment,
+  updateBudgetPayment,
+  removeBudgetPayment,
+} from '../src/tools/budget.js';
 import { setupClientMocks } from './_fixtures.js';
 
 const MOCK_BUDGET_ITEM = {
@@ -14,12 +21,13 @@ const MOCK_BUDGET_ITEM = {
   item_type: { key: 'VENUE', display_name: 'Venue' },
   paid_cents: 75000,
   note: 'Original note',
-  account_vendor_uuid: 'vendor-uuid-1',
+  // Real API shape: the linked vendor is a nested object, not a flat uuid.
+  account_vendor: { uuid: 'vendor-uuid-1', vendor_name: 'Biddle Ranch Vineyard', vendor_image: null },
   payments: [
     {
       uuid: 'payment-uuid-1',
       budget_item_uuid: '8b90d700-c891-46f9-87c5-f0f8b786b457',
-      payment_type: 'DEPOSIT',
+      payment_type: 'PAID',
       amount_cents: 75000,
       note: null,
       paid_at: 1743019200000,
@@ -72,6 +80,7 @@ describe('budget tools', () => {
     expect(parsed.items[0].payment_count).toBe(1);
     expect(parsed.items[0].taxonomy_node_uuid).toBe('node-uuid-1');
     expect(parsed.items[0].account_vendor_uuid).toBe('vendor-uuid-1');
+    expect(parsed.items[0].account_vendor_name).toBe('Biddle Ranch Vineyard');
   });
 
   it('updateBudgetItem: GETs budget via mobile, PUTs with correct body format', async () => {
@@ -109,5 +118,119 @@ describe('budget tools', () => {
     await expect(
       updateBudgetItem(client, { uuid: 'nonexistent-uuid' })
     ).rejects.toThrow('Budget item with UUID "nonexistent-uuid" not found');
+  });
+
+  it('updateBudgetItem: omits account_vendor_uuid for an unlinked item', async () => {
+    const unlinked = { ...MOCK_BUDGET_ITEM, account_vendor: null };
+    const budget = { data: { ...MOCK_BUDGET_RESPONSE.data, taxonomy_nodes: [{ title: 'x', items: [unlinked] }] } };
+    reqSpy
+      .mockResolvedValueOnce(budget as never)
+      .mockResolvedValueOnce({ data: unlinked } as never);
+
+    await updateBudgetItem(client, { uuid: unlinked.uuid, note: 'n' });
+
+    const body = reqSpy.mock.calls[1][2] as Record<string, unknown>;
+    expect(body).not.toHaveProperty('account_vendor_uuid');
+  });
+
+  describe('payments', () => {
+    const PAYMENT = {
+      uuid: 'payment-uuid-2',
+      budget_item_uuid: MOCK_BUDGET_ITEM.uuid,
+      budget_item_title: 'Venue',
+      payment_type: 'PENDING',
+      amount_cents: 520400,
+      note: 'Balance',
+      paid_at: null,
+      due_at: Date.UTC(2027, 4, 15, 12),
+      remind_at: Date.UTC(2027, 4, 8, 12),
+    };
+
+    it('listBudgetPayments: flattens payments across items with ISO dates', async () => {
+      reqSpy.mockResolvedValueOnce(MOCK_BUDGET_RESPONSE as never);
+
+      const result = await listBudgetPayments(client, {});
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0]).toMatchObject({
+        uuid: 'payment-uuid-1',
+        budget_item_title: 'Venue',
+        payment_type: 'PAID',
+        paid_at: new Date(1743019200000).toISOString(),
+        remind_at: null,
+      });
+    });
+
+    it('listBudgetPayments: throws when item_uuid not found', async () => {
+      reqSpy.mockResolvedValueOnce(MOCK_BUDGET_RESPONSE as never);
+      await expect(listBudgetPayments(client, { item_uuid: 'nope' })).rejects.toThrow(
+        'Budget item with UUID "nope" not found'
+      );
+    });
+
+    it('addBudgetPayment: POSTs item_uuid and pins date-only strings to noon UTC', async () => {
+      reqSpy.mockResolvedValueOnce({ data: PAYMENT } as never);
+
+      await addBudgetPayment(client, {
+        item_uuid: MOCK_BUDGET_ITEM.uuid,
+        payment_type: 'PENDING',
+        amount_cents: 520400,
+        note: 'Balance',
+        due_at: '2027-05-15',
+        remind_at: '2027-05-08',
+      });
+
+      expect(reqSpy).toHaveBeenCalledWith('POST', '/v3/budgets/payments', {
+        item_uuid: MOCK_BUDGET_ITEM.uuid,
+        payment_type: 'PENDING',
+        amount_cents: 520400,
+        note: 'Balance',
+        paid_at: null,
+        due_at: Date.UTC(2027, 4, 15, 12),
+        remind_at: Date.UTC(2027, 4, 8, 12),
+      });
+    });
+
+    it('addBudgetPayment: rejects an unparseable date before calling the API', async () => {
+      await expect(
+        addBudgetPayment(client, { item_uuid: 'x', payment_type: 'PAID', amount_cents: 1, paid_at: 'someday' })
+      ).rejects.toThrow('Invalid date "someday"');
+      expect(reqSpy).not.toHaveBeenCalled();
+    });
+
+    it('updateBudgetPayment: read-modify-writes with payment_uuid, null clears a field', async () => {
+      reqSpy
+        .mockResolvedValueOnce({ data: PAYMENT } as never)
+        .mockResolvedValueOnce({ data: { ...PAYMENT, payment_type: 'PAID' } } as never);
+
+      await updateBudgetPayment(client, {
+        uuid: 'payment-uuid-2',
+        payment_type: 'PAID',
+        paid_at: '2027-05-10',
+        remind_at: null,
+      });
+
+      expect(reqSpy).toHaveBeenNthCalledWith(1, 'GET', '/v3/budgets/payments/payment-uuid-2');
+      expect(reqSpy).toHaveBeenNthCalledWith(2, 'PUT', '/v3/budgets/payments', {
+        payment_uuid: 'payment-uuid-2',
+        item_uuid: MOCK_BUDGET_ITEM.uuid,
+        payment_type: 'PAID',
+        amount_cents: 520400,
+        note: 'Balance',
+        paid_at: Date.UTC(2027, 4, 10, 12),
+        due_at: PAYMENT.due_at,
+        remind_at: null,
+      });
+    });
+
+    it('removeBudgetPayment: DELETEs by uuid', async () => {
+      reqSpy.mockResolvedValueOnce({ data: null } as never);
+
+      const result = await removeBudgetPayment(client, { uuid: 'payment-uuid-2' });
+
+      expect(reqSpy).toHaveBeenCalledWith('DELETE', '/v3/budgets/payments/payment-uuid-2');
+      expect(result.content[0].text).toContain('payment-uuid-2');
+    });
   });
 });
